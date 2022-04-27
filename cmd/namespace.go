@@ -19,6 +19,7 @@ type namespaceOptions struct {
 
 	// Allows user to skip y/n confirm when creating a namespace
 	noPrompt bool
+	orgID *string
 	// This lets us pass in our own interface for testing
 	tty createNamespaceUserInterface
 	// Linked with --integration-testing flag for stubbing UI in gexec tests
@@ -56,7 +57,7 @@ func newNamespaceCommand(config *settings.Config) *cobra.Command {
 	}
 
 	createCmd := &cobra.Command{
-		Use:   "create <name> (<vcs-type> <org-name> | <org-id>)",
+		Use:   "create <name> [<vcs-type>] [<org-name>]",
 		Short: "Create a namespace",
 		Long: `Create a namespace.
 Please note that at this time all namespaces created in the registry are world-readable.`,
@@ -75,20 +76,21 @@ Please note that at this time all namespaces created in the registry are world-r
 
 			return createNamespace(opts)
 		},
-		Args:        cobra.RangeArgs(2, 3),
+		Args: cobra.MaximumNArgs(2),
 		Annotations: make(map[string]string),
 	}
 
 	createCmd.Annotations["<name>"] = "The name to give your new namespace"
-	createCmd.Annotations["<vcs-type>"] = `Your VCS provider, can be either "github" or "bitbucket"`
-	createCmd.Annotations["<org-name>"] = `The name used for your organization`
-	createCmd.Annotations["<org-id>"] = `The id of your organization`
+	createCmd.Annotations["[<vcs-type>]"] = `Your VCS provider, can be either "github" or "bitbucket". Optional when passing org-id flag.`
+	createCmd.Annotations["[<org-name>]"] = `The name used for your organization. Optional when passing org-id flag.`
 
 	createCmd.Flags().BoolVar(&opts.integrationTesting, "integration-testing", false, "Enable test mode to bypass interactive UI.")
 	if err := createCmd.Flags().MarkHidden("integration-testing"); err != nil {
 		panic(err)
 	}
 	createCmd.Flags().BoolVar(&opts.noPrompt, "no-prompt", false, "Disable prompt to bypass interactive UI.")
+
+	opts.orgID = createCmd.Flags().String("org-id", "", "The id of your organization.")
 
 	namespaceCmd.AddCommand(createCmd)
 
@@ -157,16 +159,19 @@ To change the namespace, you will have to contact CircleCI customer support.
 
 func createNamespace(opts namespaceOptions) error {
 	namespaceName := opts.args[0]
-	vcsTypeOrOrgId := opts.args[1]
+	//skip if no orgid provided
+	if opts.orgID != nil && strings.TrimSpace(*opts.orgID) != ""{
+		_, err := uuid.Parse(*opts.orgID)
+		if err == nil {
+			createNamespaceWithOrgId(opts, namespaceName, *opts.orgID)
+			return nil
+		}
 
-	_, err := uuid.Parse(vcsTypeOrOrgId)
-	if err == nil {
-		createNamespaceWithOrgId(opts, namespaceName, vcsTypeOrOrgId)
-		return nil
+	//skip if no vcs type and org name provided
+	} else if len(opts.args) > 1{
+		createNamespaceWithVcsTypeAndOrgName(opts, namespaceName, opts.args[1], opts.args[2])
 	}
-
-	createNamespaceWithVcsTypeAndOrgName(opts, namespaceName, vcsTypeOrOrgId, opts.args[2])
-	return nil
+	return fmt.Errorf("please provide org-id or vcs type and org name")
 }
 
 func renameNamespace(opts namespaceOptions) error {
